@@ -261,24 +261,36 @@
            const [roomInput, setRoomInput] = useState('');
            const [playerName, setPlayerName] = useState('玩家' + Math.floor(Math.random() * 1000));
 
-                     // 初始化游戏
-           const initGame = useCallback(() => {
+                                // 初始化游戏
+           const initGame = useCallback((isSinglePlayer = false) => {
              const deck = shuffleDeck(createDeck());
              
-                            // 为房间中的每个玩家创建游戏数据
-               const roomPlayers = roomState.players.map((roomPlayer, index) => ({
+             let gamePlayers;
+             
+             if (isSinglePlayer) {
+               // 单机模式：创建3个AI玩家
+               gamePlayers = [
+                 { id: 'P1', name: '你', hand: [], score: 0, selectedCards: [], doubleDown: false, hasSelected: false, isAI: false },
+                 { id: 'P2', name: 'AI玩家1', hand: [], score: 0, selectedCards: [], doubleDown: false, hasSelected: false, isAI: true },
+                 { id: 'P3', name: 'AI玩家2', hand: [], score: 0, selectedCards: [], doubleDown: false, hasSelected: false, isAI: true }
+               ];
+             } else {
+               // 联网模式：使用房间中的玩家
+               gamePlayers = roomState.players.map((roomPlayer, index) => ({
                  id: `P${index + 1}`,
                  name: roomPlayer.name,
                  hand: [],
                  score: 0,
                  selectedCards: [],
                  doubleDown: false,
-                 hasSelected: false // 添加选择状态标记
+                 hasSelected: false,
+                 isAI: false
                }));
+             }
              
              // 发初始手牌（每人5张）
              for (let i = 0; i < 5; i++) {
-               roomPlayers.forEach((player, index) => {
+               gamePlayers.forEach((player, index) => {
                  player.hand.push(deck.pop());
                });
              }
@@ -294,28 +306,88 @@
              // 创建游戏状态
              const gameData = {
                deck: deck.map(card => ({ ...card, id: card.id || Math.random().toString() })),
-               players: roomPlayers,
+               players: gamePlayers,
                communityCards: communityCards.map(card => ({ ...card, id: card.id || Math.random().toString() })),
                currentRound: 1,
                gamePhase: 'selecting',
                timeLeft: 30,
                lastSecondPlace: 0,
-               revealedSelections: false
+               revealedSelections: false,
+               isSinglePlayer: isSinglePlayer
              };
              
-             // 保存游戏状态到Firebase
-             database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
-             
-             // 更新房间状态
-             database.ref(`rooms/${roomState.roomId}/gameStarted`).set(true);
+             if (!isSinglePlayer && roomState.roomId) {
+               // 联网模式：保存到Firebase
+               database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+               database.ref(`rooms/${roomState.roomId}/gameStarted`).set(true);
+             }
              
              // 更新本地状态
              setGameState(gameData);
              setSelectedCards([]);
              setDoubleDown(false);
+             
+             // 如果是单机模式，AI玩家自动选择
+             if (isSinglePlayer) {
+               setTimeout(() => {
+                 makeAIDecisions(gameData);
+               }, 1000);
+             }
            }, [roomState.roomId, roomState.players]);
 
-                     // 选择手牌
+                     // AI决策函数
+           const makeAIDecisions = (gameData) => {
+             const { players, currentRound } = gameData;
+             const newPlayers = [...players];
+             
+             // AI玩家自动选择
+             for (let i = 1; i < 3; i++) { // AI玩家1和2
+               if (newPlayers[i].isAI && !newPlayers[i].hasSelected) {
+                 if (currentRound === 5) {
+                   // 第5轮：随机选择是否加倍
+                   newPlayers[i].doubleDown = Math.random() > 0.5;
+                   newPlayers[i].selectedCards = [];
+                 } else {
+                   // 前4轮：随机选择2张牌
+                   const availableIndices = [...Array(newPlayers[i].hand.length).keys()];
+                   const selectedIndices = [];
+                   for (let j = 0; j < 2; j++) {
+                     const randomIndex = availableIndices.splice(Math.floor(Math.random() * availableIndices.length), 1)[0];
+                     selectedIndices.push(randomIndex);
+                   }
+                   newPlayers[i].selectedCards = selectedIndices;
+                   newPlayers[i].doubleDown = false;
+                 }
+                 newPlayers[i].hasSelected = true;
+               }
+             }
+             
+             // 检查是否所有玩家都已选择
+             const allPlayersSelected = newPlayers.every(player => player.hasSelected);
+             
+             if (allPlayersSelected) {
+               // 所有玩家都已选择，进入揭示阶段
+               const updatedGameData = {
+                 ...gameData,
+                 players: newPlayers,
+                 gamePhase: 'revealing',
+                 revealedSelections: true
+               };
+               
+               // 第4轮时在揭示阶段显示公牌4
+               if (currentRound === 4) {
+                 updatedGameData.communityCards = updatedGameData.communityCards.map(card => 
+                   card.position === 3 ? { ...card, revealed: true } : card
+                 );
+               }
+               
+               setGameState(updatedGameData);
+             } else {
+               setGameState({ ...gameData, players: newPlayers });
+             }
+           };
+           
+           // 选择手牌
            const selectCard = (cardIndex) => {
              if (gameState.gamePhase !== 'selecting') return;
              
@@ -375,8 +447,13 @@
                    
                    console.log('进入揭示阶段:', gameData);
                    
-                   // 保存到Firebase
-                   database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                   if (gameState.isSinglePlayer) {
+                     // 单机模式：直接更新本地状态
+                     setGameState(gameData);
+                   } else {
+                     // 联网模式：保存到Firebase
+                     database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                   }
                  }
                  
                  // 清空本地选择状态
@@ -430,8 +507,13 @@
                    );
                  }
                  
-                 // 保存到Firebase
-                 database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                 if (gameState.isSinglePlayer) {
+                   // 单机模式：直接更新本地状态
+                   setGameState(gameData);
+                 } else {
+                   // 联网模式：保存到Firebase
+                   database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                 }
                }
                
                // 清空本地选择状态
@@ -535,8 +617,13 @@
                    
                    console.log('准备下一轮:', gameData);
                    
-                   // 保存到Firebase
-                   database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                   if (gameState.isSinglePlayer) {
+                     // 单机模式：直接更新本地状态
+                     setGameState(gameData);
+                   } else {
+                     // 联网模式：保存到Firebase
+                     database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                   }
                  } else {
                    // 进入第5轮
                    const gameData = {
@@ -551,8 +638,13 @@
                    
                    console.log('进入第5轮:', gameData);
                    
-                   // 保存到Firebase
-                   database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                   if (gameState.isSinglePlayer) {
+                     // 单机模式：直接更新本地状态
+                     setGameState(gameData);
+                   } else {
+                     // 联网模式：保存到Firebase
+                     database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                   }
                  }
                } else {
                  // 第5轮的计分规则
@@ -578,8 +670,13 @@
                  
                  console.log('游戏结束:', gameData);
                  
-                 // 保存到Firebase
-                 database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                 if (gameState.isSinglePlayer) {
+                   // 单机模式：直接更新本地状态
+                   setGameState(gameData);
+                 } else {
+                   // 联网模式：保存到Firebase
+                   database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                 }
                  return;
                }
                
@@ -624,6 +721,17 @@
                  setTimeout(() => {
                    confirmSelection();
                  }, 500);
+               }
+             }
+             
+             // 单机模式：AI玩家自动选择
+             if (gameState.isSinglePlayer && gameState.gamePhase === 'selecting') {
+               const currentPlayer = getCurrentPlayer();
+               if (currentPlayer && !currentPlayer.isAI && currentPlayer.hasSelected) {
+                 // 人类玩家已选择，AI玩家自动选择
+                 setTimeout(() => {
+                   makeAIDecisions(gameState);
+                 }, 1000);
                }
              }
              return () => clearTimeout(timer);
@@ -1001,16 +1109,27 @@
                 </div>
               )}
               
-              {gameState.gamePhase === 'waiting' && !roomState.isInRoom && (
-                <div className="text-center">
-                  <button 
-                    onClick={initGame}
-                    className="mobile-button px-6 py-3 bg-blue-500 text-white rounded-lg text-xl hover:bg-blue-600 touch-feedback"
-                  >
-                    开始游戏
-                  </button>
-                </div>
-              )}
+                             {gameState.gamePhase === 'waiting' && !roomState.isInRoom && (
+                 <div className="text-center space-y-4">
+                   <div>
+                     <h3 className="text-lg font-bold mb-3">选择游戏模式</h3>
+                     <div className="space-y-3">
+                       <button 
+                         onClick={() => initGame(true)}
+                         className="mobile-button w-full px-6 py-3 bg-blue-500 text-white rounded-lg text-xl hover:bg-blue-600 touch-feedback"
+                       >
+                         单机游戏
+                       </button>
+                       <button 
+                         onClick={() => setShowRoomModal(true)}
+                         className="mobile-button w-full px-6 py-3 bg-green-500 text-white rounded-lg text-xl hover:bg-green-600 touch-feedback"
+                       >
+                         联网游戏
+                       </button>
+                     </div>
+                   </div>
+                 </div>
+               )}
               
               {gameState.gamePhase !== 'waiting' && (
                 <>
@@ -1084,7 +1203,10 @@
                        
                        return (
                          <div key={player.id} className="text-center">
-                                                        <div className="font-bold text-sm sm:text-base">{player.name}</div>
+                                                        <div className="font-bold text-sm sm:text-base">
+                               {player.name}
+                               {player.isAI && <span className="text-xs text-gray-500 ml-1">(AI)</span>}
+                             </div>
                              <div className="text-sm">手牌: {player.hand.length}张</div>
                              {player.hasSelected && (
                                <div className="text-xs text-green-600 mt-1">已选择</div>
@@ -1180,14 +1302,14 @@
                              </div>
                            ))}
                        </div>
-                       {roomState.isHost && (
-                         <button 
-                           onClick={initGame}
-                           className="mobile-button mt-4 px-6 py-3 bg-blue-500 text-white rounded-lg text-xl hover:bg-blue-600 touch-feedback"
-                         >
-                           重新开始
-                         </button>
-                       )}
+                                               {(roomState.isHost || gameState.isSinglePlayer) && (
+                          <button 
+                            onClick={() => initGame(gameState.isSinglePlayer)}
+                            className="mobile-button mt-4 px-6 py-3 bg-blue-500 text-white rounded-lg text-xl hover:bg-blue-600 touch-feedback"
+                          >
+                            重新开始
+                          </button>
+                        )}
                      </div>
                    )}
                 </>
