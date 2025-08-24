@@ -530,6 +530,9 @@
                   gameStarted: false
                 });
                 
+                // 开始监听房间数据变化
+                startRoomListener(roomId);
+                
                 setShowRoomModal(false);
                 alert(`房间创建成功！房间号：${roomId}`);
               })
@@ -585,10 +588,13 @@
                   roomId,
                   isInRoom: true,
                   isHost: false,
-                  players: [...roomState.players, player],
+                  players: [player],
                   maxPlayers: 3,
                   gameStarted: false
                 });
+                
+                // 开始监听房间数据变化
+                startRoomListener(roomId);
                 
                 setShowRoomModal(false);
                 alert('成功加入房间！');
@@ -599,8 +605,38 @@
               });
           };
           
+          // 房间数据监听器
+          const startRoomListener = (roomId) => {
+            console.log('开始监听房间:', roomId);
+            database.ref(`rooms/${roomId}`).on('value', (snapshot) => {
+              if (snapshot.exists()) {
+                const roomData = snapshot.val();
+                console.log('房间数据更新:', roomData);
+                
+                setRoomState(prev => ({
+                  ...prev,
+                  players: roomData.players || [],
+                  gameStarted: roomData.gameStarted || false
+                }));
+              } else {
+                console.log('房间不存在，停止监听');
+                setRoomState({
+                  roomId: null,
+                  isInRoom: false,
+                  isHost: false,
+                  players: [],
+                  maxPlayers: 3,
+                  gameStarted: false
+                });
+              }
+            });
+          };
+          
           const leaveRoom = () => {
             if (roomState.roomId) {
+              // 停止监听
+              database.ref(`rooms/${roomState.roomId}`).off();
+              // 删除房间
               database.ref(`rooms/${roomState.roomId}`).remove();
             }
             
@@ -1024,5 +1060,4 @@
         ReactDOM.render(<ZhaoErYouGame />, document.getElementById('root'));
     </script>
 </body>
-
 </html>
