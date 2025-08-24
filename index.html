@@ -314,188 +314,191 @@
              setDoubleDown(false);
            }, [roomState.roomId, roomState.players]);
 
-          // 选择手牌
-          const selectCard = (cardIndex) => {
-            if (gameState.gamePhase !== 'selecting') return;
-            
-            const newSelected = [...selectedCards];
-            if (newSelected.includes(cardIndex)) {
-              newSelected.splice(newSelected.indexOf(cardIndex), 1);
-            } else if (newSelected.length < 2) {
-              newSelected.push(cardIndex);
-            }
-            setSelectedCards(newSelected);
-          };
+                     // 选择手牌
+           const selectCard = (cardIndex) => {
+             if (gameState.gamePhase !== 'selecting') return;
+             
+             // 确保只能选择自己的手牌
+             const currentPlayer = getCurrentPlayer();
+             if (!currentPlayer || cardIndex >= currentPlayer.hand.length) return;
+             
+             const newSelected = [...selectedCards];
+             if (newSelected.includes(cardIndex)) {
+               newSelected.splice(newSelected.indexOf(cardIndex), 1);
+             } else if (newSelected.length < 2) {
+               newSelected.push(cardIndex);
+             }
+             setSelectedCards(newSelected);
+           };
 
-          // 确认选择
-          const confirmSelection = () => {
-            if (selectedCards.length !== 2 && gameState.currentRound < 5) return;
-            if (gameState.currentRound === 5 && selectedCards.length !== 0) return;
-            
-            setGameState(prev => ({
-              ...prev,
-              players: prev.players.map((player, index) => 
-                index === 0 ? { ...player, selectedCards: [...selectedCards], doubleDown } : player
-              )
-            }));
-            
-            // 模拟其他玩家选择
-            setTimeout(() => {
-              setGameState(prev => ({
-                ...prev,
-                players: prev.players.map((player, index) => {
-                  if (index === 0) return player;
-                  
-                  if (prev.currentRound === 5) {
-                    return { ...player, selectedCards: [], doubleDown: Math.random() > 0.5 };
-                  } else {
-                    // 其他玩家随机选择2张可用的手牌
-                    const availableIndices = player.hand.map((_, i) => i);
-                    const randomSelected = [];
-                    for (let i = 0; i < 2; i++) {
-                      const randomIndex = availableIndices.splice(Math.floor(Math.random() * availableIndices.length), 1)[0];
-                      randomSelected.push(randomIndex);
-                    }
-                    return { ...player, selectedCards: randomSelected, doubleDown: Math.random() > 0.5 };
-                  }
-                }),
-                gamePhase: 'revealing',
-                revealedSelections: true, // 显示其他玩家的选牌
-                // 第4轮时在揭示阶段显示公牌4
-                communityCards: prev.currentRound === 4 ? 
-                  prev.communityCards.map(card => 
-                    card.position === 3 ? { ...card, revealed: true } : card
-                  ) : prev.communityCards
-              }));
-            }, 1000);
-          };
+                     // 确认选择
+           const confirmSelection = () => {
+             if (selectedCards.length !== 2 && gameState.currentRound < 5) return;
+             if (gameState.currentRound === 5 && selectedCards.length !== 0) return;
+             
+             const currentPlayerIndex = getCurrentPlayerIndex();
+             
+             // 更新当前玩家的选择到Firebase
+             const updatedPlayers = [...gameState.players];
+             updatedPlayers[currentPlayerIndex] = {
+               ...updatedPlayers[currentPlayerIndex],
+               selectedCards: [...selectedCards],
+               doubleDown
+             };
+             
+             // 保存到Firebase
+             database.ref(`rooms/${roomState.roomId}/gameState/players/${currentPlayerIndex}`).set(updatedPlayers[currentPlayerIndex]);
+             
+             // 检查是否所有玩家都已选择
+             const allPlayersSelected = updatedPlayers.every(player => 
+               player.selectedCards.length === (gameState.currentRound === 5 ? 0 : 2)
+             );
+             
+             if (allPlayersSelected) {
+               // 所有玩家都已选择，进入揭示阶段
+               const gameData = {
+                 ...gameState,
+                 players: updatedPlayers,
+                 gamePhase: 'revealing',
+                 revealedSelections: true
+               };
+               
+               // 第4轮时在揭示阶段显示公牌4
+               if (gameState.currentRound === 4) {
+                 gameData.communityCards = gameData.communityCards.map(card => 
+                   card.position === 3 ? { ...card, revealed: true } : card
+                 );
+               }
+               
+               // 保存到Firebase
+               database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+             }
+             
+             // 清空本地选择状态
+             setSelectedCards([]);
+             setDoubleDown(false);
+           };
 
-          // 计算轮次结果
-          const calculateRoundResult = () => {
-            const { players, communityCards, currentRound } = gameState;
-            
-            let playerHands = [];
-            
-            if (currentRound === 5) {
-              // 第5轮：使用剩余的3张手牌
-              playerHands = players.map((player, index) => {
-                const remainingCards = player.hand.filter((_, cardIndex) => 
-                  !players[index].selectedCards.includes(cardIndex)
-                );
-                return getHandType(remainingCards);
-              });
-            } else {
-              // 前4轮：选择的2张手牌+对应公牌
-              const communityCard = communityCards[currentRound - 1];
-              playerHands = players.map((player, index) => {
-                const selectedPlayerCards = player.selectedCards.map(cardIndex => player.hand[cardIndex]);
-                const threeCards = [...selectedPlayerCards, communityCard];
-                return getHandType(threeCards);
-              });
-            }
-            
-            // 比较牌型，确定排名
-            const rankings = [0, 1, 2].sort((a, b) => compareHands(playerHands[b], playerHands[a]));
-            
-            // 计算得分
-            const newPlayers = [...players];
-            
-            if (currentRound < 5) {
-              // 前4轮的计分规则
-              const firstPlace = rankings[0];
-              const secondPlace = rankings[1];
-              const thirdPlace = rankings[2];
-              
-              newPlayers[firstPlace].score += 1 * currentRound;
-              newPlayers[thirdPlace].score += 1 * currentRound;
-              newPlayers[secondPlace].score -= 2 * currentRound;
-              
-              // 丢弃选择的手牌（从手牌中移除选择的卡牌）
-              newPlayers.forEach(player => {
-                // 创建新的手牌数组，排除被选择的卡牌
-                const newHand = player.hand.filter((_, cardIndex) => !player.selectedCards.includes(cardIndex));
-                player.hand = newHand;
-                player.selectedCards = []; // 清空选择
-              });
-              
-              // 隐藏当前轮次使用的公牌
-              const updatedCommunityCards = gameState.communityCards.map(card => 
-                card.position === currentRound - 1 ? { ...card, used: true } : card
-              );
-              
-              setGameState(prev => ({
-                ...prev,
-                players: newPlayers,
-                communityCards: updatedCommunityCards,
-                lastSecondPlace: secondPlace,
-                revealedSelections: false
-              }));
-            } else {
-              // 第5轮的计分规则
-              const firstPlace = rankings[0];
-              const secondPlace = rankings[1];
-              const thirdPlace = rankings[2];
-              
-              newPlayers[firstPlace].score += 1 * 5 + 5 * (newPlayers[firstPlace].doubleDown ? 1 : 0);
-              newPlayers[thirdPlace].score += 1 * 5 + 5 * (newPlayers[thirdPlace].doubleDown ? 1 : 0);
-              newPlayers[secondPlace].score -= 2 * 5 + 5 * (newPlayers[firstPlace].doubleDown ? 1 : 0) + 5 * (newPlayers[thirdPlace].doubleDown ? 1 : 0);
-              
-              setGameState(prev => ({
-                ...prev,
-                players: newPlayers,
-                gamePhase: 'finished'
-              }));
-              return;
-            }
-            
-            // 准备下一轮
-            setTimeout(() => {
-              if (currentRound < 4) {
-                // 发牌准备下一轮（每人再发2张，补充到5张）
-                const newDeck = [...gameState.deck];
-                const updatedPlayers = newPlayers.map(player => ({ ...player }));
-                
-                // 从二游玩家开始逆时针发牌，每人发2张
-                for (let i = 0; i < 2; i++) {
-                  for (let j = 0; j < 3; j++) {
-                    const playerIndex = (gameState.lastSecondPlace + j) % 3;
-                    updatedPlayers[playerIndex].hand.push(newDeck.pop());
-                  }
-                }
-                
-                setGameState(prev => ({
-                  ...prev,
-                  deck: newDeck,
-                  players: updatedPlayers,
-                  currentRound: currentRound + 1,
-                  gamePhase: 'selecting',
-                  timeLeft: 30,
-                  revealedSelections: false
-                }));
-              } else {
-                // 进入第5轮
-                if (currentRound === 4) {
-                  // 第4轮结束后隐藏公牌4
-                  const updatedCommunityCards = gameState.communityCards.map(card => 
-                    card.position === 3 ? { ...card, used: true } : card
-                  );
-                  
-                  setGameState(prev => ({
-                    ...prev,
-                    communityCards: updatedCommunityCards,
-                    players: newPlayers,
-                    currentRound: 5,
-                    gamePhase: 'selecting',
-                    timeLeft: 30,
-                    revealedSelections: false
-                  }));
-                }
-              }
-              
-              setSelectedCards([]);
-              setDoubleDown(false);
-            }, 3000);
-          };
+                     // 计算轮次结果
+           const calculateRoundResult = () => {
+             const { players, communityCards, currentRound } = gameState;
+             
+             let playerHands = [];
+             
+             if (currentRound === 5) {
+               // 第5轮：使用剩余的3张手牌
+               playerHands = players.map((player, index) => {
+                 const remainingCards = player.hand.filter((_, cardIndex) => 
+                   !players[index].selectedCards.includes(cardIndex)
+                 );
+                 return getHandType(remainingCards);
+               });
+             } else {
+               // 前4轮：选择的2张手牌+对应公牌
+               const communityCard = communityCards[currentRound - 1];
+               playerHands = players.map((player, index) => {
+                 const selectedPlayerCards = player.selectedCards.map(cardIndex => player.hand[cardIndex]);
+                 const threeCards = [...selectedPlayerCards, communityCard];
+                 return getHandType(threeCards);
+               });
+             }
+             
+             // 比较牌型，确定排名
+             const rankings = [0, 1, 2].sort((a, b) => compareHands(playerHands[b], playerHands[a]));
+             
+             // 计算得分
+             const newPlayers = [...players];
+             
+             if (currentRound < 5) {
+               // 前4轮的计分规则
+               const firstPlace = rankings[0];
+               const secondPlace = rankings[1];
+               const thirdPlace = rankings[2];
+               
+               newPlayers[firstPlace].score += 1 * currentRound;
+               newPlayers[thirdPlace].score += 1 * currentRound;
+               newPlayers[secondPlace].score -= 2 * currentRound;
+               
+               // 丢弃选择的手牌（从手牌中移除选择的卡牌）
+               newPlayers.forEach(player => {
+                 // 创建新的手牌数组，排除被选择的卡牌
+                 const newHand = player.hand.filter((_, cardIndex) => !player.selectedCards.includes(cardIndex));
+                 player.hand = newHand;
+                 player.selectedCards = []; // 清空选择
+               });
+               
+               // 隐藏当前轮次使用的公牌
+               const updatedCommunityCards = gameState.communityCards.map(card => 
+                 card.position === currentRound - 1 ? { ...card, used: true } : card
+               );
+               
+               // 准备下一轮
+               if (currentRound < 4) {
+                 // 发牌准备下一轮（每人再发2张，补充到5张）
+                 const newDeck = [...gameState.deck];
+                 
+                 // 从二游玩家开始逆时针发牌，每人发2张
+                 for (let i = 0; i < 2; i++) {
+                   for (let j = 0; j < 3; j++) {
+                     const playerIndex = (gameState.lastSecondPlace + j) % 3;
+                     newPlayers[playerIndex].hand.push(newDeck.pop());
+                   }
+                 }
+                 
+                 const gameData = {
+                   ...gameState,
+                   deck: newDeck,
+                   players: newPlayers,
+                   communityCards: updatedCommunityCards,
+                   currentRound: currentRound + 1,
+                   gamePhase: 'selecting',
+                   timeLeft: 30,
+                   lastSecondPlace: secondPlace,
+                   revealedSelections: false
+                 };
+                 
+                 // 保存到Firebase
+                 database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+               } else {
+                 // 进入第5轮
+                 const gameData = {
+                   ...gameState,
+                   communityCards: updatedCommunityCards,
+                   players: newPlayers,
+                   currentRound: 5,
+                   gamePhase: 'selecting',
+                   timeLeft: 30,
+                   revealedSelections: false
+                 };
+                 
+                 // 保存到Firebase
+                 database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+               }
+             } else {
+               // 第5轮的计分规则
+               const firstPlace = rankings[0];
+               const secondPlace = rankings[1];
+               const thirdPlace = rankings[2];
+               
+               newPlayers[firstPlace].score += 1 * 5 + 5 * (newPlayers[firstPlace].doubleDown ? 1 : 0);
+               newPlayers[thirdPlace].score += 1 * 5 + 5 * (newPlayers[thirdPlace].doubleDown ? 1 : 0);
+               newPlayers[secondPlace].score -= 2 * 5 + 5 * (newPlayers[firstPlace].doubleDown ? 1 : 0) + 5 * (newPlayers[thirdPlace].doubleDown ? 1 : 0);
+               
+               const gameData = {
+                 ...gameState,
+                 players: newPlayers,
+                 gamePhase: 'finished'
+               };
+               
+               // 保存到Firebase
+               database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+               return;
+             }
+             
+             // 清空本地选择状态
+             setSelectedCards([]);
+             setDoubleDown(false);
+           };
 
           // 计时器
           useEffect(() => {
@@ -690,7 +693,7 @@
              if (!roomState.isInRoom || !gameState.players.length) return 0;
              
              // 根据房间中的位置确定游戏中的位置
-             const roomPlayerIndex = roomState.players.findIndex(p => p.id === roomState.roomId);
+             const roomPlayerIndex = roomState.players.findIndex(p => p.id === currentPlayerId);
              if (roomPlayerIndex === -1) return 0;
              
              return roomPlayerIndex;
@@ -997,7 +1000,7 @@
                    </div>
                   
                                      {/* 操作按钮 - 只对当前玩家显示 */}
-                   {gameState.gamePhase === 'selecting' && getCurrentPlayerIndex() === 0 && (
+                   {gameState.gamePhase === 'selecting' && (
                      <div className="text-center space-y-3 sm:space-y-0 sm:space-x-4">
                        {gameState.currentRound === 5 && (
                          <label className="inline-flex items-center">
@@ -1020,7 +1023,7 @@
                      </div>
                    )}
                    
-                   {gameState.gamePhase === 'revealing' && getCurrentPlayerIndex() === 0 && (
+                   {gameState.gamePhase === 'revealing' && (
                      <div className="text-center">
                        <button 
                          onClick={calculateRoundResult}
