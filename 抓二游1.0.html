@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>抓二游扑克牌游戏</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        /* 移动端优化样式 */
+        @media (max-width: 768px) {
+            .mobile-card {
+                width: 3rem !important;
+                height: 4.5rem !important;
+                font-size: 0.875rem !important;
+            }
+            
+            .mobile-button {
+                padding: 0.75rem 1.5rem !important;
+                font-size: 1rem !important;
+                min-height: 3rem !important;
+            }
+            
+            .mobile-text {
+                font-size: 1.125rem !important;
+            }
+            
+            .mobile-title {
+                font-size: 2rem !important;
+            }
+        }
+        
+        /* 触摸反馈 */
+        .touch-feedback:active {
+            transform: scale(0.95);
+            transition: transform 0.1s;
+        }
+        
+        /* 防止页面滚动 */
+        .game-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+
+        // Firebase配置
+        const firebaseConfig = {
+          apiKey: "AIzaSyCSniZvStXjJsNMIVVPurycolMyLahGsnQ",
+          authDomain: "zhuaeryou-game.firebaseapp.com",
+          databaseURL: "https://zhuaeryou-game-default-rtdb.firebaseio.com",
+          projectId: "zhuaeryou-game",
+          storageBucket: "zhuaeryou-game.firebasestorage.app",
+          messagingSenderId: "92916267079",
+          appId: "1:92916267079:web:20e676254d17dfb5e01962"
+        };
+
+        // 初始化Firebase
+        if (!firebase.apps.length) {
+          firebase.initializeApp(firebaseConfig);
+        }
+        const database = firebase.database();
+
+        // 卡牌数据结构
+        const suits = ['♠', '♥', '♦', '♣'];
+        const ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+        const jokers = ['大王', '小王'];
+
+        // 创建完整牌组
+        const createDeck = () => {
+          const deck = [];
+          suits.forEach(suit => {
+            ranks.forEach(rank => {
+              deck.push({ suit, rank, isJoker: false, id: `${suit}${rank}` });
+            });
+          });
+          deck.push({ suit: '', rank: '大王', isJoker: true, id: '大王' });
+          deck.push({ suit: '', rank: '小王', isJoker: true, id: '小王' });
+          return deck;
+        };
+
+        // 洗牌函数
+        const shuffleDeck = (deck) => {
+          const newDeck = [...deck];
+          for (let i = newDeck.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [newDeck[i], newDeck[j]] = [newDeck[j], newDeck[i]];
+          }
+          return newDeck;
+        };
+
+        // 获取牌的数值（用于比较大小）
+        const getCardValue = (rank) => {
+          if (rank === 'A') return 14;
+          if (rank === 'K') return 13;
+          if (rank === 'Q') return 12;
+          if (rank === 'J') return 11;
+          return parseInt(rank);
+        };
+
+        // 判断牌型
+        const getHandType = (cards) => {
+          if (cards.length !== 3) return { type: 'invalid', value: 0 };
+          
+          const jokers = cards.filter(card => card.isJoker);
+          const normalCards = cards.filter(card => !card.isJoker);
+          
+          if (jokers.length === 2) {
+            // 两张癞子牌，默认为豹子
+            if (normalCards.length === 1) {
+              return { type: '豹子', value: getCardValue(normalCards[0].rank), cards };
+            }
+          }
+          
+          if (jokers.length === 1) {
+            // 一张癞子牌，选择最大可能牌型
+            if (normalCards.length === 2) {
+              const values = normalCards.map(card => getCardValue(card.rank)).sort((a, b) => b - a);
+              const suits = normalCards.map(card => card.suit);
+              
+              // 检查是否可以组成豹子
+              if (values[0] === values[1]) {
+                return { type: '豹子', value: values[0], cards };
+              }
+              
+              // 检查是否可以组成顺子
+              const diff = Math.abs(values[0] - values[1]);
+              if (diff === 1 || diff === 2) {
+                const maxValue = Math.max(values[0], values[1]);
+                if (suits[0] === suits[1]) {
+                  return { type: '顺金', value: maxValue, cards };
+                } else {
+                  return { type: '顺子', value: maxValue, cards };
+                }
+              }
+              
+              // 组成金花或对子
+              if (suits[0] === suits[1]) {
+                return { type: '金花', value: values[0], cards };
+              } else {
+                return { type: '对子', value: values[0], cards };
+              }
+            }
+          }
+          
+          // 无癞子牌的情况
+          const values = normalCards.map(card => getCardValue(card.rank)).sort((a, b) => b - a);
+          const suits = normalCards.map(card => card.suit);
+          const isFlush = suits.every(suit => suit === suits[0]);
+          
+          // 检查豹子
+          if (values[0] === values[1] && values[1] === values[2]) {
+            return { type: '豹子', value: values[0], cards };
+          }
+          
+          // 检查顺子
+          const isStraight = (values[0] - values[1] === 1 && values[1] - values[2] === 1) ||
+                            (values[0] === 14 && values[1] === 3 && values[2] === 2); // A32特殊情况
+          
+          if (isStraight && isFlush) {
+            return { type: '顺金', value: values[0], cards };
+          }
+          
+          if (isFlush) {
+            return { type: '金花', value: values[0], cards };
+          }
+          
+          if (isStraight) {
+            return { type: '顺子', value: values[0], cards };
+          }
+          
+          // 检查对子
+          if (values[0] === values[1] || values[1] === values[2] || values[0] === values[2]) {
+            const pairValue = values[0] === values[1] ? values[0] : values[1];
+            return { type: '对子', value: pairValue, cards };
+          }
+          
+          // 散牌
+          return { type: '散牌', value: values[0], cards };
+        };
+
+        // 比较牌型大小
+        const compareHands = (hand1, hand2) => {
+          const typeOrder = ['散牌', '对子', '顺子', '金花', '顺金', '豹子'];
+          const type1Index = typeOrder.indexOf(hand1.type);
+          const type2Index = typeOrder.indexOf(hand2.type);
+          
+          if (type1Index !== type2Index) {
+            return type1Index - type2Index;
+          }
+          
+          return hand1.value - hand2.value;
+        };
+
+        const ZhaoErYouGame = () => {
+          const [gameState, setGameState] = useState({
+            deck: [],
+            players: [
+              { id: 'P1', name: '玩家1', hand: [], score: 0, selectedCards: [], doubleDown: false },
+              { id: 'P2', name: '玩家2', hand: [], score: 0, selectedCards: [], doubleDown: false },
+              { id: 'P3', name: '玩家3', hand: [], score: 0, selectedCards: [], doubleDown: false }
+            ],
+            communityCards: [],
+            revealedSelections: false, // 是否显示其他玩家的选牌
+            currentRound: 0,
+            gamePhase: 'waiting', // waiting, selecting, revealing, finished
+            timeLeft: 30,
+            lastSecondPlace: 0 // 上轮二游玩家索引
+          });
+
+          const [selectedCards, setSelectedCards] = useState([]);
+          const [doubleDown, setDoubleDown] = useState(false);
+          const [showShareModal, setShowShareModal] = useState(false);
+          
+          // 房间系统状态
+          const [roomState, setRoomState] = useState({
+            roomId: null,
+            isInRoom: false,
+            isHost: false,
+            players: [],
+            maxPlayers: 3,
+            gameStarted: false
+          });
+          
+          const [showRoomModal, setShowRoomModal] = useState(false);
+          const [roomInput, setRoomInput] = useState('');
+          const [playerName, setPlayerName] = useState('玩家' + Math.floor(Math.random() * 1000));
+
+          // 初始化游戏
+          const initGame = useCallback(() => {
+            const deck = shuffleDeck(createDeck());
+            const players = gameState.players.map(player => ({ ...player, hand: [], selectedCards: [], doubleDown: false, score: 0 }));
+            
+            // 发初始手牌（每人5张）
+            for (let i = 0; i < 5; i++) {
+              players.forEach((player, index) => {
+                player.hand.push(deck.pop());
+              });
+            }
+            
+            // 设置公牌（4张）
+            const communityCards = [
+              { ...deck.pop(), revealed: true, position: 0, used: false }, // 公牌1
+              { ...deck.pop(), revealed: true, position: 1, used: false }, // 公牌2
+              { ...deck.pop(), revealed: true, position: 2, used: false }, // 公牌3
+              { ...deck.pop(), revealed: false, position: 3, used: false }  // 公牌4（暗牌）
+            ];
+            
+            setGameState(prev => ({
+              ...prev,
+              deck,
+              players,
+              communityCards,
+              currentRound: 1,
+              gamePhase: 'selecting',
+              timeLeft: 30,
+              lastSecondPlace: 0,
+              revealedSelections: false
+            }));
+            
+            setSelectedCards([]);
+            setDoubleDown(false);
+          }, []);
+
+          // 选择手牌
+          const selectCard = (cardIndex) => {
+            if (gameState.gamePhase !== 'selecting') return;
+            
+            const newSelected = [...selectedCards];
+            if (newSelected.includes(cardIndex)) {
+              newSelected.splice(newSelected.indexOf(cardIndex), 1);
+            } else if (newSelected.length < 2) {
+              newSelected.push(cardIndex);
+            }
+            setSelectedCards(newSelected);
+          };
+
+          // 确认选择
+          const confirmSelection = () => {
+            if (selectedCards.length !== 2 && gameState.currentRound < 5) return;
+            if (gameState.currentRound === 5 && selectedCards.length !== 0) return;
+            
+            setGameState(prev => ({
+              ...prev,
+              players: prev.players.map((player, index) => 
+                index === 0 ? { ...player, selectedCards: [...selectedCards], doubleDown } : player
+              )
+            }));
+            
+            // 模拟其他玩家选择
+            setTimeout(() => {
+              setGameState(prev => ({
+                ...prev,
+                players: prev.players.map((player, index) => {
+                  if (index === 0) return player;
+                  
+                  if (prev.currentRound === 5) {
+                    return { ...player, selectedCards: [], doubleDown: Math.random() > 0.5 };
+                  } else {
+                    // 其他玩家随机选择2张可用的手牌
+                    const availableIndices = player.hand.map((_, i) => i);
+                    const randomSelected = [];
+                    for (let i = 0; i < 2; i++) {
+                      const randomIndex = availableIndices.splice(Math.floor(Math.random() * availableIndices.length), 1)[0];
+                      randomSelected.push(randomIndex);
+                    }
+                    return { ...player, selectedCards: randomSelected, doubleDown: Math.random() > 0.5 };
+                  }
+                }),
+                gamePhase: 'revealing',
+                revealedSelections: true, // 显示其他玩家的选牌
+                // 第4轮时在揭示阶段显示公牌4
+                communityCards: prev.currentRound === 4 ? 
+                  prev.communityCards.map(card => 
+                    card.position === 3 ? { ...card, revealed: true } : card
+                  ) : prev.communityCards
+              }));
+            }, 1000);
+          };
+
+          // 计算轮次结果
+          const calculateRoundResult = () => {
+            const { players, communityCards, currentRound } = gameState;
+            
+            let playerHands = [];
+            
+            if (currentRound === 5) {
+              // 第5轮：使用剩余的3张手牌
+              playerHands = players.map((player, index) => {
+                const remainingCards = player.hand.filter((_, cardIndex) => 
+                  !players[index].selectedCards.includes(cardIndex)
+                );
+                return getHandType(remainingCards);
+              });
+            } else {
+              // 前4轮：选择的2张手牌+对应公牌
+              const communityCard = communityCards[currentRound - 1];
+              playerHands = players.map((player, index) => {
+                const selectedPlayerCards = player.selectedCards.map(cardIndex => player.hand[cardIndex]);
+                const threeCards = [...selectedPlayerCards, communityCard];
+                return getHandType(threeCards);
+              });
+            }
+            
+            // 比较牌型，确定排名
+            const rankings = [0, 1, 2].sort((a, b) => compareHands(playerHands[b], playerHands[a]));
+            
+            // 计算得分
+            const newPlayers = [...players];
+            
+            if (currentRound < 5) {
+              // 前4轮的计分规则
+              const firstPlace = rankings[0];
+              const secondPlace = rankings[1];
+              const thirdPlace = rankings[2];
+              
+              newPlayers[firstPlace].score += 1 * currentRound;
+              newPlayers[thirdPlace].score += 1 * currentRound;
+              newPlayers[secondPlace].score -= 2 * currentRound;
+              
+              // 丢弃选择的手牌（从手牌中移除选择的卡牌）
+              newPlayers.forEach(player => {
+                // 创建新的手牌数组，排除被选择的卡牌
+                const newHand = player.hand.filter((_, cardIndex) => !player.selectedCards.includes(cardIndex));
+                player.hand = newHand;
+                player.selectedCards = []; // 清空选择
+              });
+              
+              // 隐藏当前轮次使用的公牌
+              const updatedCommunityCards = gameState.communityCards.map(card => 
+                card.position === currentRound - 1 ? { ...card, used: true } : card
+              );
+              
+              setGameState(prev => ({
+                ...prev,
+                players: newPlayers,
+                communityCards: updatedCommunityCards,
+                lastSecondPlace: secondPlace,
+                revealedSelections: false
+              }));
+            } else {
+              // 第5轮的计分规则
+              const firstPlace = rankings[0];
+              const secondPlace = rankings[1];
+              const thirdPlace = rankings[2];
+              
+              newPlayers[firstPlace].score += 1 * 5 + 5 * (newPlayers[firstPlace].doubleDown ? 1 : 0);
+              newPlayers[thirdPlace].score += 1 * 5 + 5 * (newPlayers[thirdPlace].doubleDown ? 1 : 0);
+              newPlayers[secondPlace].score -= 2 * 5 + 5 * (newPlayers[firstPlace].doubleDown ? 1 : 0) + 5 * (newPlayers[thirdPlace].doubleDown ? 1 : 0);
+              
+              setGameState(prev => ({
+                ...prev,
+                players: newPlayers,
+                gamePhase: 'finished'
+              }));
+              return;
+            }
+            
+            // 准备下一轮
+            setTimeout(() => {
+              if (currentRound < 4) {
+                // 发牌准备下一轮（每人再发2张，补充到5张）
+                const newDeck = [...gameState.deck];
+                const updatedPlayers = newPlayers.map(player => ({ ...player }));
+                
+                // 从二游玩家开始逆时针发牌，每人发2张
+                for (let i = 0; i < 2; i++) {
+                  for (let j = 0; j < 3; j++) {
+                    const playerIndex = (gameState.lastSecondPlace + j) % 3;
+                    updatedPlayers[playerIndex].hand.push(newDeck.pop());
+                  }
+                }
+                
+                setGameState(prev => ({
+                  ...prev,
+                  deck: newDeck,
+                  players: updatedPlayers,
+                  currentRound: currentRound + 1,
+                  gamePhase: 'selecting',
+                  timeLeft: 30,
+                  revealedSelections: false
+                }));
+              } else {
+                // 进入第5轮
+                if (currentRound === 4) {
+                  // 第4轮结束后隐藏公牌4
+                  const updatedCommunityCards = gameState.communityCards.map(card => 
+                    card.position === 3 ? { ...card, used: true } : card
+                  );
+                  
+                  setGameState(prev => ({
+                    ...prev,
+                    communityCards: updatedCommunityCards,
+                    players: newPlayers,
+                    currentRound: 5,
+                    gamePhase: 'selecting',
+                    timeLeft: 30,
+                    revealedSelections: false
+                  }));
+                }
+              }
+              
+              setSelectedCards([]);
+              setDoubleDown(false);
+            }, 3000);
+          };
+
+          // 计时器
+          useEffect(() => {
+            let timer;
+            if (gameState.gamePhase === 'selecting' && gameState.timeLeft > 0) {
+              timer = setTimeout(() => {
+                setGameState(prev => ({ ...prev, timeLeft: prev.timeLeft - 1 }));
+              }, 1000);
+            } else if (gameState.gamePhase === 'selecting' && gameState.timeLeft === 0) {
+              // 时间到，自动确认选择
+              confirmSelection();
+            }
+            return () => clearTimeout(timer);
+          }, [gameState.gamePhase, gameState.timeLeft]);
+
+          // 房间系统功能
+          const createRoom = () => {
+            const roomId = Math.random().toString(36).substr(2, 6).toUpperCase();
+            const player = {
+              id: Date.now().toString(),
+              name: playerName,
+              isHost: true,
+              isOnline: true
+            };
+            
+            const roomData = {
+              roomId,
+              players: [player],
+              maxPlayers: 3,
+              gameStarted: false,
+              createdAt: Date.now()
+            };
+            
+            // 保存到Firebase
+            database.ref(`rooms/${roomId}`).set(roomData);
+            
+            setRoomState({
+              roomId,
+              isInRoom: true,
+              isHost: true,
+              players: [player],
+              maxPlayers: 3,
+              gameStarted: false
+            });
+            
+            setShowRoomModal(false);
+          };
+          
+          const joinRoom = () => {
+            if (!roomInput.trim()) return;
+            
+            const roomId = roomInput.trim().toUpperCase();
+            const player = {
+              id: Date.now().toString(),
+              name: playerName,
+              isHost: false,
+              isOnline: true
+            };
+            
+            // 检查房间是否存在
+            database.ref(`rooms/${roomId}`).once('value').then((snapshot) => {
+              if (snapshot.exists()) {
+                const roomData = snapshot.val();
+                if (roomData.players.length >= roomData.maxPlayers) {
+                  alert('房间已满！');
+                  return;
+                }
+                
+                // 加入房间
+                const newPlayers = [...roomData.players, player];
+                database.ref(`rooms/${roomId}/players`).set(newPlayers);
+                
+                setRoomState({
+                  roomId,
+                  isInRoom: true,
+                  isHost: false,
+                  players: newPlayers,
+                  maxPlayers: roomData.maxPlayers,
+                  gameStarted: roomData.gameStarted
+                });
+                
+                setShowRoomModal(false);
+              } else {
+                alert('房间不存在！');
+              }
+            });
+          };
+          
+          const leaveRoom = () => {
+            if (roomState.roomId) {
+              database.ref(`rooms/${roomState.roomId}`).remove();
+            }
+            
+            setRoomState({
+              roomId: null,
+              isInRoom: false,
+              isHost: false,
+              players: [],
+              maxPlayers: 3,
+              gameStarted: false
+            });
+          };
+          
+          // 分享功能
+          const shareGame = () => {
+            const gameUrl = window.location.href;
+            const gameTitle = '抓二游 - 有趣的扑克牌游戏';
+            const gameDesc = '来和我一起玩抓二游吧！';
+            
+            if (navigator.share) {
+              // 原生分享API（移动端）
+              navigator.share({
+                title: gameTitle,
+                text: gameDesc,
+                url: gameUrl
+              });
+            } else {
+              // 复制链接到剪贴板
+              navigator.clipboard.writeText(gameUrl).then(() => {
+                alert('游戏链接已复制到剪贴板！');
+              }).catch(() => {
+                // 降级方案
+                const textArea = document.createElement('textarea');
+                textArea.value = gameUrl;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('游戏链接已复制到剪贴板！');
+              });
+            }
+          };
+          
+          // 分享房间
+          const shareRoom = () => {
+            const roomUrl = `${window.location.origin}${window.location.pathname}?room=${roomState.roomId}`;
+            const roomTitle = `抓二游房间 - ${roomState.roomId}`;
+            const roomDesc = `来和我一起玩抓二游吧！房间号：${roomState.roomId}`;
+            
+            if (navigator.share) {
+              navigator.share({
+                title: roomTitle,
+                text: roomDesc,
+                url: roomUrl
+              });
+            } else {
+              navigator.clipboard.writeText(roomUrl).then(() => {
+                alert('房间链接已复制到剪贴板！');
+              }).catch(() => {
+                const textArea = document.createElement('textarea');
+                textArea.value = roomUrl;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                alert('房间链接已复制到剪贴板！');
+              });
+            }
+          };
+
+          // 渲染卡牌
+          const renderCard = (card, isRevealed = true, isSelected = false, onClick = null, isUsed = false) => {
+            return (
+              <div 
+                key={card.id} 
+                className={`mobile-card w-16 h-24 border-2 rounded-lg flex flex-col justify-center items-center cursor-pointer transition-all touch-feedback ${
+                  isSelected ? 'border-blue-500 bg-blue-100' : 'border-gray-300 bg-white'
+                } ${isRevealed && !isUsed ? '' : 'bg-gray-400'} ${isUsed ? 'opacity-50' : ''}`}
+                onClick={onClick}
+              >
+                {isRevealed && !isUsed ? (
+                  <>
+                    <div className={`text-lg font-bold ${card.suit === '♥' || card.suit === '♦' ? 'text-red-500' : 'text-black'}`}>
+                      {card.rank}
+                    </div>
+                    <div className={`text-sm ${card.suit === '♥' || card.suit === '♦' ? 'text-red-500' : 'text-black'}`}>
+                      {card.suit}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs text-white">{isUsed ? '已用' : '牌背'}</div>
+                )}
+              </div>
+            );
+          };
+
+          return (
+            <div className="game-container p-2 sm:p-4 max-w-6xl mx-auto bg-green-100 min-h-screen">
+              {/* 顶部导航栏 */}
+              <div className="flex justify-between items-center mb-4">
+                <h1 className="mobile-title text-2xl sm:text-3xl font-bold text-center flex-1">抓二游</h1>
+                <div className="flex space-x-2">
+                  {!roomState.isInRoom ? (
+                    <button 
+                      onClick={() => setShowRoomModal(true)}
+                      className="mobile-button px-3 py-2 bg-green-500 text-white rounded-lg text-sm hover:bg-green-600 touch-feedback"
+                    >
+                      房间
+                    </button>
+                  ) : (
+                    <>
+                      <button 
+                        onClick={shareRoom}
+                        className="mobile-button px-3 py-2 bg-purple-500 text-white rounded-lg text-sm hover:bg-purple-600 touch-feedback"
+                      >
+                        分享房间
+                      </button>
+                      <button 
+                        onClick={leaveRoom}
+                        className="mobile-button px-3 py-2 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 touch-feedback"
+                      >
+                        离开房间
+                      </button>
+                    </>
+                  )}
+                  <button 
+                    onClick={() => setShowShareModal(true)}
+                    className="mobile-button px-3 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 touch-feedback"
+                  >
+                    分享
+                  </button>
+                </div>
+              </div>
+              
+              {/* 房间信息显示 */}
+              {roomState.isInRoom && (
+                <div className="bg-white rounded-lg p-4 mb-4 shadow-md">
+                  <div className="text-center mb-3">
+                    <h3 className="text-lg font-bold text-blue-600">房间号: {roomState.roomId}</h3>
+                    <p className="text-sm text-gray-600">
+                      {roomState.players.length}/{roomState.maxPlayers} 人
+                      {roomState.isHost && ' (房主)'}
+                    </p>
+                  </div>
+                  
+                  {/* 玩家列表 */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {roomState.players.map((player, index) => (
+                      <div key={player.id} className="text-center p-2 bg-gray-50 rounded">
+                        <div className="text-sm font-medium">{player.name}</div>
+                        <div className="text-xs text-gray-500">
+                          {player.isHost ? '房主' : '玩家'}
+                        </div>
+                        <div className={`w-2 h-2 rounded-full mx-auto mt-1 ${
+                          player.isOnline ? 'bg-green-500' : 'bg-gray-400'
+                        }`}></div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* 房主控制按钮 */}
+                  {roomState.isHost && roomState.players.length >= 2 && (
+                    <div className="text-center mt-3">
+                      <button 
+                        onClick={initGame}
+                        className="mobile-button px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 touch-feedback"
+                      >
+                        开始游戏
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {gameState.gamePhase === 'waiting' && !roomState.isInRoom && (
+                <div className="text-center">
+                  <button 
+                    onClick={initGame}
+                    className="mobile-button px-6 py-3 bg-blue-500 text-white rounded-lg text-xl hover:bg-blue-600 touch-feedback"
+                  >
+                    开始游戏
+                  </button>
+                </div>
+              )}
+              
+              {gameState.gamePhase !== 'waiting' && (
+                <>
+                  {/* 游戏状态信息 */}
+                  <div className="text-center mb-4">
+                    <div className="mobile-text text-lg sm:text-xl font-bold">第 {gameState.currentRound} 轮</div>
+                    {gameState.gamePhase === 'selecting' && (
+                      <div className="text-lg text-red-500">剩余时间: {gameState.timeLeft}秒</div>
+                    )}
+                  </div>
+                  
+                  {/* 玩家分数 */}
+                  <div className="flex justify-center space-x-4 sm:space-x-8 mb-4 sm:mb-6">
+                    {gameState.players.map(player => (
+                      <div key={player.id} className="text-center">
+                        <div className="font-bold text-sm sm:text-base">{player.name}</div>
+                        <div className="mobile-text text-lg sm:text-xl">{player.score}分</div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* 公牌区域 */}
+                  <div className="text-center mb-4 sm:mb-6">
+                    <h3 className="text-base sm:text-lg font-bold mb-2">公牌</h3>
+                    <div className="flex justify-center space-x-1 sm:space-x-2">
+                      {gameState.communityCards.map((card, index) => (
+                        <div key={index} className="text-center">
+                          {renderCard(card, card.revealed, false, null, card.used)}
+                          <div className="text-xs mt-1">公牌{index + 1}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* 玩家手牌 */}
+                  <div className="mb-4 sm:mb-6">
+                    <h3 className="text-base sm:text-lg font-bold mb-2">你的手牌 (玩家1)</h3>
+                    {gameState.currentRound === 5 && gameState.revealedSelections ? (
+                      <div className="text-center">
+                        <div className="text-sm text-gray-600 mb-2">你的3张手牌:</div>
+                        <div className="flex justify-center space-x-1 sm:space-x-2">
+                          {gameState.players[0].hand.map((card, index) => 
+                            renderCard(card, true, false, null, false)
+                          )}
+                        </div>
+                        {gameState.players[0].doubleDown && (
+                          <div className="text-sm text-red-500 mt-2">你已选择加倍</div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex justify-center space-x-1 sm:space-x-2">
+                        {gameState.players[0].hand.map((card, index) => (
+                          renderCard(
+                            card, 
+                            true, 
+                            selectedCards.includes(index),
+                            gameState.gamePhase === 'selecting' ? () => selectCard(index) : null
+                          )
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* 其他玩家手牌（只显示数量） */}
+                  <div className="flex justify-center space-x-4 sm:space-x-8 mb-4 sm:mb-6">
+                    {gameState.players.slice(1).map((player, index) => (
+                      <div key={player.id} className="text-center">
+                        <div className="font-bold text-sm sm:text-base">{player.name}</div>
+                        <div className="text-sm">手牌: {player.hand.length}张</div>
+                        {gameState.revealedSelections && gameState.currentRound < 5 && player.selectedCards.length > 0 && (
+                          <div className="mt-2">
+                            <div className="text-xs text-gray-600 mb-1">选定的牌:</div>
+                            <div className="flex justify-center space-x-1">
+                              {player.selectedCards.map(cardIndex => 
+                                renderCard(player.hand[cardIndex], true, false, null, false)
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {gameState.revealedSelections && gameState.currentRound === 5 && (
+                          <div className="mt-2">
+                            <div className="text-xs text-gray-600 mb-1">手牌:</div>
+                            <div className="flex justify-center space-x-1">
+                              {player.hand.map((card, cardIndex) => 
+                                renderCard(card, true, false, null, false)
+                              )}
+                            </div>
+                            {player.doubleDown && (
+                              <div className="text-xs text-red-500 mt-1">已加倍</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* 操作按钮 */}
+                  {gameState.gamePhase === 'selecting' && (
+                    <div className="text-center space-y-3 sm:space-y-0 sm:space-x-4">
+                      {gameState.currentRound === 5 && (
+                        <label className="inline-flex items-center">
+                          <input 
+                            type="checkbox" 
+                            checked={doubleDown} 
+                            onChange={(e) => setDoubleDown(e.target.checked)}
+                            className="mr-2 w-4 h-4"
+                          />
+                          <span className="text-sm sm:text-base">加倍</span>
+                        </label>
+                      )}
+                      <button 
+                        onClick={confirmSelection}
+                        disabled={gameState.currentRound < 5 ? selectedCards.length !== 2 : false}
+                        className="mobile-button px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-400 touch-feedback"
+                      >
+                        确认选择
+                      </button>
+                    </div>
+                  )}
+                  
+                  {gameState.gamePhase === 'revealing' && (
+                    <div className="text-center">
+                      <button 
+                        onClick={calculateRoundResult}
+                        className="mobile-button px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 touch-feedback"
+                      >
+                        查看结果
+                      </button>
+                    </div>
+                  )}
+                  
+                  {gameState.gamePhase === 'finished' && (
+                    <div className="text-center">
+                      <h2 className="text-xl sm:text-2xl font-bold mb-4">游戏结束</h2>
+                      <div className="mobile-text text-lg sm:text-xl">
+                        最终排名：
+                        {[...gameState.players]
+                          .sort((a, b) => b.score - a.score)
+                          .map((player, index) => (
+                            <div key={player.id}>
+                              第{index + 1}名: {player.name} ({player.score}分)
+                            </div>
+                          ))}
+                      </div>
+                      <button 
+                        onClick={initGame}
+                        className="mobile-button mt-4 px-6 py-3 bg-blue-500 text-white rounded-lg text-xl hover:bg-blue-600 touch-feedback"
+                      >
+                        重新开始
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* 分享弹窗 */}
+              {showShareModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white rounded-lg p-6 max-w-sm w-full">
+                    <h3 className="text-lg font-bold mb-4">分享游戏</h3>
+                    <div className="space-y-3">
+                      <button 
+                        onClick={shareGame}
+                        className="w-full mobile-button bg-blue-500 text-white rounded-lg hover:bg-blue-600 touch-feedback"
+                      >
+                        分享游戏
+                      </button>
+                      <button 
+                        onClick={() => setShowShareModal(false)}
+                        className="w-full mobile-button bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 touch-feedback"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* 房间弹窗 */}
+              {showRoomModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white rounded-lg p-6 max-w-sm w-full">
+                    <h3 className="text-lg font-bold mb-4">房间系统</h3>
+                    
+                    {/* 玩家名称设置 */}
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">你的名字</label>
+                      <input 
+                        type="text" 
+                        value={playerName}
+                        onChange={(e) => setPlayerName(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="输入你的名字"
+                      />
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <button 
+                        onClick={createRoom}
+                        className="w-full mobile-button bg-green-500 text-white rounded-lg hover:bg-green-600 touch-feedback"
+                      >
+                        创建房间
+                      </button>
+                      
+                      <div className="flex space-x-2">
+                        <input 
+                          type="text" 
+                          value={roomInput}
+                          onChange={(e) => setRoomInput(e.target.value)}
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="输入房间号"
+                        />
+                        <button 
+                          onClick={joinRoom}
+                          className="mobile-button px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 touch-feedback"
+                        >
+                          加入
+                        </button>
+                      </div>
+                      
+                      <button 
+                        onClick={() => setShowRoomModal(false)}
+                        className="w-full mobile-button bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 touch-feedback"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        ReactDOM.render(<ZhaoErYouGame />, document.getElementById('root'));
+    </script>
+</body>
+</html>
