@@ -249,6 +249,10 @@
             gameStarted: false
           });
           
+          // 调试信息
+          console.log('当前房间状态:', roomState);
+          console.log('是否在房间中:', roomState.isInRoom);
+          
           const [showRoomModal, setShowRoomModal] = useState(false);
           const [roomInput, setRoomInput] = useState('');
           const [playerName, setPlayerName] = useState('玩家' + Math.floor(Math.random() * 1000));
@@ -697,37 +701,40 @@
               {/* 顶部导航栏 */}
               <div className="flex justify-between items-center mb-4">
                 <h1 className="mobile-title text-2xl sm:text-3xl font-bold text-center flex-1">抓二游</h1>
-                <div className="flex space-x-2">
-                  {!roomState.isInRoom ? (
-                    <button 
-                      onClick={() => setShowRoomModal(true)}
-                      className="mobile-button px-3 py-2 bg-green-500 text-white rounded-lg text-sm hover:bg-green-600 touch-feedback"
-                    >
-                      房间
-                    </button>
-                  ) : (
-                    <>
-                      <button 
-                        onClick={shareRoom}
-                        className="mobile-button px-3 py-2 bg-purple-500 text-white rounded-lg text-sm hover:bg-purple-600 touch-feedback"
-                      >
-                        分享房间
-                      </button>
-                      <button 
-                        onClick={leaveRoom}
-                        className="mobile-button px-3 py-2 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 touch-feedback"
-                      >
-                        离开房间
-                      </button>
-                    </>
-                  )}
-                  <button 
-                    onClick={() => setShowShareModal(true)}
-                    className="mobile-button px-3 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 touch-feedback"
-                  >
-                    分享
-                  </button>
-                </div>
+                                 <div className="flex space-x-2">
+                   {/* 房间按钮 - 总是显示 */}
+                   <button 
+                     onClick={() => setShowRoomModal(true)}
+                     className="mobile-button px-3 py-2 bg-green-500 text-white rounded-lg text-sm hover:bg-green-600 touch-feedback"
+                   >
+                     房间
+                   </button>
+                   
+                   {/* 如果在房间中，显示房间相关按钮 */}
+                   {roomState.isInRoom && (
+                     <>
+                       <button 
+                         onClick={shareRoom}
+                         className="mobile-button px-3 py-2 bg-purple-500 text-white rounded-lg text-sm hover:bg-purple-600 touch-feedback"
+                       >
+                         分享房间
+                       </button>
+                       <button 
+                         onClick={leaveRoom}
+                         className="mobile-button px-3 py-2 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 touch-feedback"
+                       >
+                         离开房间
+                       </button>
+                     </>
+                   )}
+                   
+                   <button 
+                     onClick={() => setShowShareModal(true)}
+                     className="mobile-button px-3 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 touch-feedback"
+                   >
+                     分享
+                   </button>
+                 </div>
               </div>
               
               {/* 房间信息显示 */}
