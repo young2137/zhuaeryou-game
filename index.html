@@ -257,41 +257,58 @@
           const [roomInput, setRoomInput] = useState('');
           const [playerName, setPlayerName] = useState('玩家' + Math.floor(Math.random() * 1000));
 
-          // 初始化游戏
-          const initGame = useCallback(() => {
-            const deck = shuffleDeck(createDeck());
-            const players = gameState.players.map(player => ({ ...player, hand: [], selectedCards: [], doubleDown: false, score: 0 }));
-            
-            // 发初始手牌（每人5张）
-            for (let i = 0; i < 5; i++) {
-              players.forEach((player, index) => {
-                player.hand.push(deck.pop());
-              });
-            }
-            
-            // 设置公牌（4张）
-            const communityCards = [
-              { ...deck.pop(), revealed: true, position: 0, used: false }, // 公牌1
-              { ...deck.pop(), revealed: true, position: 1, used: false }, // 公牌2
-              { ...deck.pop(), revealed: true, position: 2, used: false }, // 公牌3
-              { ...deck.pop(), revealed: false, position: 3, used: false }  // 公牌4（暗牌）
-            ];
-            
-            setGameState(prev => ({
-              ...prev,
-              deck,
-              players,
-              communityCards,
-              currentRound: 1,
-              gamePhase: 'selecting',
-              timeLeft: 30,
-              lastSecondPlace: 0,
-              revealedSelections: false
-            }));
-            
-            setSelectedCards([]);
-            setDoubleDown(false);
-          }, []);
+                     // 初始化游戏
+           const initGame = useCallback(() => {
+             const deck = shuffleDeck(createDeck());
+             
+             // 为房间中的每个玩家创建游戏数据
+             const roomPlayers = roomState.players.map((roomPlayer, index) => ({
+               id: `P${index + 1}`,
+               name: roomPlayer.name,
+               hand: [],
+               score: 0,
+               selectedCards: [],
+               doubleDown: false
+             }));
+             
+             // 发初始手牌（每人5张）
+             for (let i = 0; i < 5; i++) {
+               roomPlayers.forEach((player, index) => {
+                 player.hand.push(deck.pop());
+               });
+             }
+             
+             // 设置公牌（4张）
+             const communityCards = [
+               { ...deck.pop(), revealed: true, position: 0, used: false }, // 公牌1
+               { ...deck.pop(), revealed: true, position: 1, used: false }, // 公牌2
+               { ...deck.pop(), revealed: true, position: 2, used: false }, // 公牌3
+               { ...deck.pop(), revealed: false, position: 3, used: false }  // 公牌4（暗牌）
+             ];
+             
+             // 创建游戏状态
+             const gameData = {
+               deck: deck.map(card => ({ ...card, id: card.id || Math.random().toString() })),
+               players: roomPlayers,
+               communityCards: communityCards.map(card => ({ ...card, id: card.id || Math.random().toString() })),
+               currentRound: 1,
+               gamePhase: 'selecting',
+               timeLeft: 30,
+               lastSecondPlace: 0,
+               revealedSelections: false
+             };
+             
+             // 保存游戏状态到Firebase
+             database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+             
+             // 更新房间状态
+             database.ref(`rooms/${roomState.roomId}/gameStarted`).set(true);
+             
+             // 更新本地状态
+             setGameState(gameData);
+             setSelectedCards([]);
+             setDoubleDown(false);
+           }, [roomState.roomId, roomState.players]);
 
           // 选择手牌
           const selectCard = (cardIndex) => {
@@ -491,146 +508,180 @@
           }, [gameState.gamePhase, gameState.timeLeft]);
 
           // 房间系统功能
-          const createRoom = () => {
-            if (!playerName.trim()) {
-              alert('请输入你的名字！');
-              return;
-            }
-            
-            console.log('尝试创建房间...');
-            
-            const roomId = Math.random().toString(36).substr(2, 6).toUpperCase();
-            const player = {
-              id: Date.now().toString(),
-              name: playerName,
-              isHost: true,
-              isOnline: true
-            };
-            
-            const roomData = {
-              roomId,
-              players: [player],
-              maxPlayers: 3,
-              gameStarted: false,
-              createdAt: Date.now()
-            };
-            
-            console.log('房间数据:', roomData);
-            
-            // 保存到Firebase
-            database.ref(`rooms/${roomId}`).set(roomData)
-              .then(() => {
-                console.log('房间创建成功');
-                setRoomState({
-                  roomId,
-                  isInRoom: true,
-                  isHost: true,
-                  players: [player],
-                  maxPlayers: 3,
-                  gameStarted: false
-                });
-                
-                // 开始监听房间数据变化
-                startRoomListener(roomId);
-                
-                setShowRoomModal(false);
-                alert(`房间创建成功！房间号：${roomId}`);
-              })
-              .catch((error) => {
-                console.error('创建房间失败:', error);
-                alert('创建房间失败: ' + error.message);
-              });
-          };
+                     const createRoom = () => {
+             if (!playerName.trim()) {
+               alert('请输入你的名字！');
+               return;
+             }
+             
+             console.log('尝试创建房间...');
+             
+             const roomId = Math.random().toString(36).substr(2, 6).toUpperCase();
+             const playerId = Date.now().toString();
+             const player = {
+               id: playerId,
+               name: playerName,
+               isHost: true,
+               isOnline: true
+             };
+             
+             const roomData = {
+               roomId,
+               players: [player],
+               maxPlayers: 3,
+               gameStarted: false,
+               createdAt: Date.now()
+             };
+             
+             console.log('房间数据:', roomData);
+             
+             // 保存到Firebase
+             database.ref(`rooms/${roomId}`).set(roomData)
+               .then(() => {
+                 console.log('房间创建成功');
+                 setRoomState({
+                   roomId,
+                   isInRoom: true,
+                   isHost: true,
+                   players: [player],
+                   maxPlayers: 3,
+                   gameStarted: false
+                 });
+                 
+                 // 开始监听房间数据变化
+                 startRoomListener(roomId);
+                 
+                 setShowRoomModal(false);
+                 alert(`房间创建成功！房间号：${roomId}`);
+               })
+               .catch((error) => {
+                 console.error('创建房间失败:', error);
+                 alert('创建房间失败: ' + error.message);
+               });
+           };
           
-          const joinRoom = () => {
-            if (!roomInput.trim()) {
-              alert('请输入房间号！');
-              return;
-            }
-            
-            console.log('尝试加入房间:', roomInput.trim());
-            
-            const roomId = roomInput.trim().toUpperCase();
-            const player = {
-              id: Date.now().toString(),
-              name: playerName,
-              isHost: false,
-              isOnline: true
-            };
-            
-            console.log('玩家信息:', player);
-            console.log('检查房间:', roomId);
-            
-            // 检查房间是否存在
-            database.ref(`rooms/${roomId}`).once('value')
-              .then((snapshot) => {
-                console.log('房间查询结果:', snapshot.val());
-                if (snapshot.exists()) {
-                  const roomData = snapshot.val();
-                  if (roomData.players.length >= roomData.maxPlayers) {
-                    alert('房间已满！');
-                    return;
-                  }
-                  
-                  console.log('准备加入房间，当前玩家数:', roomData.players.length);
-                  
-                  // 加入房间
-                  const newPlayers = [...roomData.players, player];
-                  return database.ref(`rooms/${roomId}/players`).set(newPlayers);
-                } else {
-                  alert('房间不存在！');
-                  return Promise.reject('房间不存在');
-                }
-              })
-              .then(() => {
-                console.log('成功加入房间');
-                setRoomState({
-                  roomId,
-                  isInRoom: true,
-                  isHost: false,
-                  players: [player],
-                  maxPlayers: 3,
-                  gameStarted: false
-                });
-                
-                // 开始监听房间数据变化
-                startRoomListener(roomId);
-                
-                setShowRoomModal(false);
-                alert('成功加入房间！');
-              })
-              .catch((error) => {
-                console.error('加入房间失败:', error);
-                alert('加入房间失败: ' + error.message);
-              });
-          };
+                     const joinRoom = () => {
+             if (!roomInput.trim()) {
+               alert('请输入房间号！');
+               return;
+             }
+             
+             console.log('尝试加入房间:', roomInput.trim());
+             
+             const roomId = roomInput.trim().toUpperCase();
+             const playerId = Date.now().toString();
+             const player = {
+               id: playerId,
+               name: playerName,
+               isHost: false,
+               isOnline: true
+             };
+             
+             console.log('玩家信息:', player);
+             console.log('检查房间:', roomId);
+             
+             // 检查房间是否存在
+             database.ref(`rooms/${roomId}`).once('value')
+               .then((snapshot) => {
+                 console.log('房间查询结果:', snapshot.val());
+                 if (snapshot.exists()) {
+                   const roomData = snapshot.val();
+                   if (roomData.players.length >= roomData.maxPlayers) {
+                     alert('房间已满！');
+                     return;
+                   }
+                   
+                   console.log('准备加入房间，当前玩家数:', roomData.players.length);
+                   
+                   // 加入房间
+                   const newPlayers = [...roomData.players, player];
+                   return database.ref(`rooms/${roomId}/players`).set(newPlayers);
+                 } else {
+                   alert('房间不存在！');
+                   return Promise.reject('房间不存在');
+                 }
+               })
+               .then(() => {
+                 console.log('成功加入房间');
+                 setRoomState({
+                   roomId,
+                   isInRoom: true,
+                   isHost: false,
+                   players: [player],
+                   maxPlayers: 3,
+                   gameStarted: false
+                 });
+                 
+                 // 开始监听房间数据变化
+                 startRoomListener(roomId);
+                 
+                 setShowRoomModal(false);
+                 alert('成功加入房间！');
+               })
+               .catch((error) => {
+                 console.error('加入房间失败:', error);
+                 alert('加入房间失败: ' + error.message);
+               });
+           };
           
-          // 房间数据监听器
-          const startRoomListener = (roomId) => {
-            console.log('开始监听房间:', roomId);
-            database.ref(`rooms/${roomId}`).on('value', (snapshot) => {
-              if (snapshot.exists()) {
-                const roomData = snapshot.val();
-                console.log('房间数据更新:', roomData);
-                
-                setRoomState(prev => ({
-                  ...prev,
-                  players: roomData.players || [],
-                  gameStarted: roomData.gameStarted || false
-                }));
-              } else {
-                console.log('房间不存在，停止监听');
-                setRoomState({
-                  roomId: null,
-                  isInRoom: false,
-                  isHost: false,
-                  players: [],
-                  maxPlayers: 3,
-                  gameStarted: false
-                });
-              }
-            });
-          };
+                     // 房间数据监听器
+           const startRoomListener = (roomId) => {
+             console.log('开始监听房间:', roomId);
+             
+             // 监听房间基本信息
+             database.ref(`rooms/${roomId}`).on('value', (snapshot) => {
+               if (snapshot.exists()) {
+                 const roomData = snapshot.val();
+                 console.log('房间数据更新:', roomData);
+                 
+                 // 找到当前玩家在房间中的位置
+                 const currentPlayerIndex = roomData.players.findIndex(p => p.id === (roomState.roomId ? roomState.roomId : Date.now().toString()));
+                 
+                 setRoomState(prev => ({
+                   ...prev,
+                   roomId: roomData.roomId,
+                   players: roomData.players || [],
+                   gameStarted: roomData.gameStarted || false,
+                   // 如果是房主，保持isHost为true
+                   isHost: prev.isHost || (currentPlayerIndex === 0)
+                 }));
+                 
+                 // 如果游戏已开始，监听游戏状态
+                 if (roomData.gameStarted && roomData.gameState) {
+                   setGameState(roomData.gameState);
+                 }
+               } else {
+                 console.log('房间不存在，停止监听');
+                 setRoomState({
+                   roomId: null,
+                   isInRoom: false,
+                   isHost: false,
+                   players: [],
+                   maxPlayers: 3,
+                   gameStarted: false
+                 });
+                 setGameState({
+                   deck: [],
+                   players: [],
+                   communityCards: [],
+                   currentRound: 0,
+                   gamePhase: 'waiting',
+                   timeLeft: 30,
+                   lastSecondPlace: 0,
+                   revealedSelections: false
+                 });
+               }
+             });
+             
+             // 监听游戏状态变化
+             database.ref(`rooms/${roomId}/gameState`).on('value', (snapshot) => {
+               if (snapshot.exists()) {
+                 const gameData = snapshot.val();
+                 console.log('游戏状态更新:', gameData);
+                 setGameState(gameData);
+               }
+             });
+           };
           
           const leaveRoom = () => {
             if (roomState.roomId) {
