@@ -488,6 +488,13 @@
 
           // 房间系统功能
           const createRoom = () => {
+            if (!playerName.trim()) {
+              alert('请输入你的名字！');
+              return;
+            }
+            
+            console.log('尝试创建房间...');
+            
             const roomId = Math.random().toString(36).substr(2, 6).toUpperCase();
             const player = {
               id: Date.now().toString(),
@@ -504,23 +511,37 @@
               createdAt: Date.now()
             };
             
+            console.log('房间数据:', roomData);
+            
             // 保存到Firebase
-            database.ref(`rooms/${roomId}`).set(roomData);
-            
-            setRoomState({
-              roomId,
-              isInRoom: true,
-              isHost: true,
-              players: [player],
-              maxPlayers: 3,
-              gameStarted: false
-            });
-            
-            setShowRoomModal(false);
+            database.ref(`rooms/${roomId}`).set(roomData)
+              .then(() => {
+                console.log('房间创建成功');
+                setRoomState({
+                  roomId,
+                  isInRoom: true,
+                  isHost: true,
+                  players: [player],
+                  maxPlayers: 3,
+                  gameStarted: false
+                });
+                
+                setShowRoomModal(false);
+                alert(`房间创建成功！房间号：${roomId}`);
+              })
+              .catch((error) => {
+                console.error('创建房间失败:', error);
+                alert('创建房间失败: ' + error.message);
+              });
           };
           
           const joinRoom = () => {
-            if (!roomInput.trim()) return;
+            if (!roomInput.trim()) {
+              alert('请输入房间号！');
+              return;
+            }
+            
+            console.log('尝试加入房间:', roomInput.trim());
             
             const roomId = roomInput.trim().toUpperCase();
             const player = {
@@ -530,33 +551,48 @@
               isOnline: true
             };
             
+            console.log('玩家信息:', player);
+            console.log('检查房间:', roomId);
+            
             // 检查房间是否存在
-            database.ref(`rooms/${roomId}`).once('value').then((snapshot) => {
-              if (snapshot.exists()) {
-                const roomData = snapshot.val();
-                if (roomData.players.length >= roomData.maxPlayers) {
-                  alert('房间已满！');
-                  return;
+            database.ref(`rooms/${roomId}`).once('value')
+              .then((snapshot) => {
+                console.log('房间查询结果:', snapshot.val());
+                if (snapshot.exists()) {
+                  const roomData = snapshot.val();
+                  if (roomData.players.length >= roomData.maxPlayers) {
+                    alert('房间已满！');
+                    return;
+                  }
+                  
+                  console.log('准备加入房间，当前玩家数:', roomData.players.length);
+                  
+                  // 加入房间
+                  const newPlayers = [...roomData.players, player];
+                  return database.ref(`rooms/${roomId}/players`).set(newPlayers);
+                } else {
+                  alert('房间不存在！');
+                  return Promise.reject('房间不存在');
                 }
-                
-                // 加入房间
-                const newPlayers = [...roomData.players, player];
-                database.ref(`rooms/${roomId}/players`).set(newPlayers);
-                
+              })
+              .then(() => {
+                console.log('成功加入房间');
                 setRoomState({
                   roomId,
                   isInRoom: true,
                   isHost: false,
-                  players: newPlayers,
-                  maxPlayers: roomData.maxPlayers,
-                  gameStarted: roomData.gameStarted
+                  players: [...roomState.players, player],
+                  maxPlayers: 3,
+                  gameStarted: false
                 });
                 
                 setShowRoomModal(false);
-              } else {
-                alert('房间不存在！');
-              }
-            });
+                alert('成功加入房间！');
+              })
+              .catch((error) => {
+                console.error('加入房间失败:', error);
+                alert('加入房间失败: ' + error.message);
+              });
           };
           
           const leaveRoom = () => {
