@@ -333,50 +333,110 @@
 
                      // 确认选择
            const confirmSelection = () => {
-             if (selectedCards.length !== 2 && gameState.currentRound < 5) return;
-             if (gameState.currentRound === 5 && selectedCards.length !== 0) return;
-             
-             const currentPlayerIndex = getCurrentPlayerIndex();
-             
-             // 更新当前玩家的选择到Firebase
-             const updatedPlayers = [...gameState.players];
-             updatedPlayers[currentPlayerIndex] = {
-               ...updatedPlayers[currentPlayerIndex],
-               selectedCards: [...selectedCards],
-               doubleDown
-             };
-             
-             // 保存到Firebase
-             database.ref(`rooms/${roomState.roomId}/gameState/players/${currentPlayerIndex}`).set(updatedPlayers[currentPlayerIndex]);
-             
-             // 检查是否所有玩家都已选择
-             const allPlayersSelected = updatedPlayers.every(player => 
-               player.selectedCards.length === (gameState.currentRound === 5 ? 0 : 2)
-             );
-             
-             if (allPlayersSelected) {
-               // 所有玩家都已选择，进入揭示阶段
-               const gameData = {
-                 ...gameState,
-                 players: updatedPlayers,
-                 gamePhase: 'revealing',
-                 revealedSelections: true
-               };
+             try {
+               console.log('确认选择被调用，当前轮次:', gameState.currentRound);
+               console.log('当前选择:', selectedCards);
+               console.log('当前加倍:', doubleDown);
                
-               // 第4轮时在揭示阶段显示公牌4
-               if (gameState.currentRound === 4) {
-                 gameData.communityCards = gameData.communityCards.map(card => 
-                   card.position === 3 ? { ...card, revealed: true } : card
+               // 第5轮不需要选择牌，只需要选择是否加倍
+               if (gameState.currentRound === 5) {
+                 console.log('第5轮确认加倍选择');
+                 // 第5轮直接确认加倍选择
+                 const currentPlayerIndex = getCurrentPlayerIndex();
+                 
+                 // 更新当前玩家的选择到Firebase
+                 const updatedPlayers = [...gameState.players];
+                 updatedPlayers[currentPlayerIndex] = {
+                   ...updatedPlayers[currentPlayerIndex],
+                   selectedCards: [], // 第5轮不需要选择牌
+                   doubleDown
+                 };
+                 
+                 // 保存到Firebase
+                 database.ref(`rooms/${roomState.roomId}/gameState/players/${currentPlayerIndex}`).set(updatedPlayers[currentPlayerIndex]);
+                 
+                 // 检查是否所有玩家都已选择
+                 const allPlayersSelected = updatedPlayers.every(player => 
+                   player.doubleDown !== undefined // 第5轮只需要确认加倍选择
                  );
+                 
+                 console.log('所有玩家都已选择加倍:', allPlayersSelected);
+                 
+                 if (allPlayersSelected) {
+                   // 所有玩家都已选择，进入揭示阶段
+                   const gameData = {
+                     ...gameState,
+                     players: updatedPlayers,
+                     gamePhase: 'revealing',
+                     revealedSelections: true
+                   };
+                   
+                   console.log('进入揭示阶段:', gameData);
+                   
+                   // 保存到Firebase
+                   database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+                 }
+                 
+                 // 清空本地选择状态
+                 setDoubleDown(false);
+                 return;
                }
                
+               // 前4轮需要选择2张牌
+               if (selectedCards.length !== 2) {
+                 console.log('前4轮选择牌数不足:', selectedCards.length);
+                 return;
+               }
+               
+               console.log('前4轮确认选择');
+               const currentPlayerIndex = getCurrentPlayerIndex();
+               
+               // 更新当前玩家的选择到Firebase
+               const updatedPlayers = [...gameState.players];
+               updatedPlayers[currentPlayerIndex] = {
+                 ...updatedPlayers[currentPlayerIndex],
+                 selectedCards: [...selectedCards],
+                 doubleDown: false
+               };
+               
                // 保存到Firebase
-               database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+               database.ref(`rooms/${roomState.roomId}/gameState/players/${currentPlayerIndex}`).set(updatedPlayers[currentPlayerIndex]);
+               
+               // 检查是否所有玩家都已选择
+               const allPlayersSelected = updatedPlayers.every(player => 
+                 player.selectedCards.length === 2
+               );
+               
+               console.log('所有玩家都已选择牌:', allPlayersSelected);
+               
+               if (allPlayersSelected) {
+                 // 所有玩家都已选择，进入揭示阶段
+                 const gameData = {
+                   ...gameState,
+                   players: updatedPlayers,
+                   gamePhase: 'revealing',
+                   revealedSelections: true
+                 };
+                 
+                 console.log('进入揭示阶段:', gameData);
+                 
+                 // 第4轮时在揭示阶段显示公牌4
+                 if (gameState.currentRound === 4) {
+                   gameData.communityCards = gameData.communityCards.map(card => 
+                     card.position === 3 ? { ...card, revealed: true } : card
+                   );
+                 }
+                 
+                 // 保存到Firebase
+                 database.ref(`rooms/${roomState.roomId}/gameState`).set(gameData);
+               }
+               
+               // 清空本地选择状态
+               setSelectedCards([]);
+             } catch (error) {
+               console.error('确认选择时发生错误:', error);
+               alert('确认选择时发生错误: ' + error.message);
              }
-             
-             // 清空本地选择状态
-             setSelectedCards([]);
-             setDoubleDown(false);
            };
 
                      // 计算轮次结果
@@ -500,19 +560,20 @@
              setDoubleDown(false);
            };
 
-          // 计时器
-          useEffect(() => {
-            let timer;
-            if (gameState.gamePhase === 'selecting' && gameState.timeLeft > 0) {
-              timer = setTimeout(() => {
-                setGameState(prev => ({ ...prev, timeLeft: prev.timeLeft - 1 }));
-              }, 1000);
-            } else if (gameState.gamePhase === 'selecting' && gameState.timeLeft === 0) {
-              // 时间到，自动确认选择
-              confirmSelection();
-            }
-            return () => clearTimeout(timer);
-          }, [gameState.gamePhase, gameState.timeLeft]);
+                     // 计时器
+           useEffect(() => {
+             let timer;
+             if (gameState.gamePhase === 'selecting' && gameState.timeLeft > 0) {
+               timer = setTimeout(() => {
+                 setGameState(prev => ({ ...prev, timeLeft: prev.timeLeft - 1 }));
+               }, 1000);
+             } else if (gameState.gamePhase === 'selecting' && gameState.timeLeft === 0) {
+               // 时间到，自动确认选择
+               console.log('时间耗尽，自动确认选择');
+               confirmSelection();
+             }
+             return () => clearTimeout(timer);
+           }, [gameState.gamePhase, gameState.timeLeft]);
 
           // 房间系统功能
                      const createRoom = () => {
@@ -930,36 +991,36 @@
                     </div>
                   </div>
                   
-                                     {/* 玩家手牌 */}
-                   <div className="mb-4 sm:mb-6">
-                     <h3 className="text-base sm:text-lg font-bold mb-2">
-                       你的手牌 ({getCurrentPlayer()?.name || '未知玩家'})
-                     </h3>
-                     {gameState.currentRound === 5 && gameState.revealedSelections ? (
-                       <div className="text-center">
-                         <div className="text-sm text-gray-600 mb-2">你的3张手牌:</div>
-                         <div className="flex justify-center space-x-1 sm:space-x-2">
-                           {getCurrentPlayer()?.hand.map((card, index) => 
-                             renderCard(card, true, false, null, false)
-                           ) || []}
+                                                          {/* 玩家手牌 */}
+                     <div className="mb-4 sm:mb-6">
+                       <h3 className="text-base sm:text-lg font-bold mb-2">
+                         你的手牌 ({getCurrentPlayer()?.name || '未知玩家'})
+                       </h3>
+                       {gameState.currentRound === 5 ? (
+                         <div className="text-center">
+                           <div className="text-sm text-gray-600 mb-2">你的3张手牌:</div>
+                           <div className="flex justify-center space-x-1 sm:space-x-2">
+                             {getCurrentPlayer()?.hand.map((card, index) => 
+                               renderCard(card, true, false, null, false)
+                             ) || []}
+                           </div>
+                           {getCurrentPlayer()?.doubleDown && (
+                             <div className="text-sm text-red-500 mt-2">你已选择加倍</div>
+                           )}
                          </div>
-                         {getCurrentPlayer()?.doubleDown && (
-                           <div className="text-sm text-red-500 mt-2">你已选择加倍</div>
-                         )}
-                       </div>
-                     ) : (
-                       <div className="flex justify-center space-x-1 sm:space-x-2">
-                         {getCurrentPlayer()?.hand.map((card, index) => (
-                           renderCard(
-                             card, 
-                             true, 
-                             selectedCards.includes(index),
-                             gameState.gamePhase === 'selecting' ? () => selectCard(index) : null
-                           )
-                         )) || []}
-                       </div>
-                     )}
-                   </div>
+                       ) : (
+                         <div className="flex justify-center space-x-1 sm:space-x-2">
+                           {getCurrentPlayer()?.hand.map((card, index) => (
+                             renderCard(
+                               card, 
+                               true, 
+                               selectedCards.includes(index),
+                               gameState.gamePhase === 'selecting' ? () => selectCard(index) : null
+                             )
+                           )) || []}
+                         </div>
+                       )}
+                     </div>
                   
                                      {/* 其他玩家手牌（只显示数量） */}
                    <div className="flex justify-center space-x-4 sm:space-x-8 mb-4 sm:mb-6">
@@ -1002,24 +1063,33 @@
                                      {/* 操作按钮 - 只对当前玩家显示 */}
                    {gameState.gamePhase === 'selecting' && (
                      <div className="text-center space-y-3 sm:space-y-0 sm:space-x-4">
-                       {gameState.currentRound === 5 && (
-                         <label className="inline-flex items-center">
-                           <input 
-                             type="checkbox" 
-                             checked={doubleDown} 
-                             onChange={(e) => setDoubleDown(e.target.checked)}
-                             className="mr-2 w-4 h-4"
-                           />
-                           <span className="text-sm sm:text-base">加倍</span>
-                         </label>
+                       {gameState.currentRound === 5 ? (
+                         <>
+                           <label className="inline-flex items-center">
+                             <input 
+                               type="checkbox" 
+                               checked={doubleDown} 
+                               onChange={(e) => setDoubleDown(e.target.checked)}
+                               className="mr-2 w-4 h-4"
+                             />
+                             <span className="text-sm sm:text-base">加倍</span>
+                           </label>
+                           <button 
+                             onClick={confirmSelection}
+                             className="mobile-button px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 touch-feedback"
+                           >
+                             确认加倍
+                           </button>
+                         </>
+                       ) : (
+                         <button 
+                           onClick={confirmSelection}
+                           disabled={selectedCards.length !== 2}
+                           className="mobile-button px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-400 touch-feedback"
+                         >
+                           确认选择
+                         </button>
                        )}
-                       <button 
-                         onClick={confirmSelection}
-                         disabled={gameState.currentRound < 5 ? selectedCards.length !== 2 : false}
-                         className="mobile-button px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-400 touch-feedback"
-                       >
-                         确认选择
-                       </button>
                      </div>
                    )}
                    
